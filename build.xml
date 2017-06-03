@@ -1,0 +1,196 @@
+<project name="iOS Compile" default="simulatorbuild" basedir=".">
+    
+    <!-- properties -->
+    <property file="default.properties" />
+    
+    <property environment="env" />
+    <property name="sdk.simulator" value="iphonesimulator${sdk.version}" />
+    <property name="sdk.device" value="iphoneos${sdk.version}" />
+    <property name="build.dir" location="build"/>
+    
+    <!-- clean -->
+    <target name="clean">
+        <exec executable="xcodebuild" failonerror="true">
+            <arg line="clean" />
+        </exec>
+        
+        <delete dir="${build.dir}" />
+        <mkdir dir="build"/>
+    </target>
+    
+    
+    <!-- simulator build -->
+    <target name="simulatorbuild" depends="clean">
+        <exec executable="xcodebuild" failonerror="true">
+            <!--<arg line="-sdk ${sdk.simulator}" /> -->
+            <arg line="-configuration ${config.simulator}" />
+            <!--<arg line="-target ${target.app}" />-->
+            <arg line="-workspace ${app.title}.xcworkspace" />
+            <arg line="-scheme ${app.title}" />
+        </exec>
+    </target>
+    
+    <!-- simulator build for code coverage -->
+    <target name="-cc_simulatorbuild">
+        <exec executable="xcodebuild" failonerror="true">
+            <arg line="-sdk ${sdk.simulator}" />
+            <arg line="-configuration ${config.simulator}" />
+            <!--<arg line="-target ${target.app}" />-->
+            <arg line="-workspace ${app.title}.xcworkspace" />
+            <arg line="-scheme ${app.title}" />
+            
+            <!-- Changing some project settings to activate code coverage. -->
+            <!--<arg line="OTHER_CFLAGS=- -coverage" /> -->
+            
+            <arg line="GCC_INSTRUMENT_PROGRAM_FLOW_ARCS=YES" />
+            <arg line="GCC_GENERATE_TEST_COVERAGE_FILES=YES" />
+            <!--<arg line="GCC_PRECOMPILE_PREFIX_HEADER=NO" />-->
+        </exec>
+    </target>
+    
+    <!-- device build -->
+    <target name="devicebuild">
+        <exec executable="xcodebuild" failonerror="true">
+            <arg line="-sdk ${sdk.device}" />
+            <arg line="-configuration ${config.device}" />
+            <!--<arg line="-target ${target.app}" />-->
+            <arg line="-workspace ${app.title}.xcworkspace" />
+            <arg line="-scheme ${app.title}" />
+        </exec>
+    </target>
+    
+    <!-- unit tests -->
+    <target name="unittest" depends="simulatorbuild">
+        <exec executable="xcodebuild" output="${build.dir}/tmp" errorproperty="error.unittest">
+            <arg line="-sdk ${sdk.simulator}" />
+            <arg line="-configuration Debug" />
+            <arg line="-target ${target.unittests}" />
+        </exec>
+        
+        <exec executable="ruby">
+            <arg line="ocunit2junit.rb" />
+            <arg file="${build.dir}/tmp" />
+        </exec>
+        
+        <delete file="${build.dir}/tmp" />
+    </target>
+    
+    <!-- code coverage -->
+    <target name="codecoverage" depends="-cc_simulatorbuild">
+        <exec executable="xcodebuild" output="${build.dir}/tmp" errorproperty="error.unittest">
+            <arg line="-sdk ${sdk.simulator}" />
+            <arg line="-configuration Debug" />
+            <arg line="-target ${target.unittests}" />
+            
+            <!-- Changing some project settings to activate code coverage. -->
+            <!--<arg line="OTHER_CFLAGS=- -coverage" /> -->
+            
+            <arg line="GCC_INSTRUMENT_PROGRAM_FLOW_ARCS=YES" />
+            <arg line="GCC_GENERATE_TEST_COVERAGE_FILES=YES" />
+        </exec>
+        
+        <exec executable="ruby">
+            <arg line="ocunit2junit.rb" />
+            <arg file="${build.dir}/tmp" />
+        </exec>
+        
+        <delete file="${build.dir}/tmp" />
+        
+        <mkdir dir="${build.dir}/code-coverage"/>
+        <exec executable="python">
+            <arg line="gcovr" />
+            <arg line="-x" />               <!-- set XML-Output-->
+            <arg line="-v" />               <!-- set more output details -->
+            <arg line="-r '${basedir}'" />  <!-- set the root dir -->
+            <arg line="-o '${build.dir}/code-coverage/coverage.xml'" />
+        </exec>
+    </target>
+    
+    
+    <!-- Distribute Target -->
+    <target name="distribute" depends="devicebuild">
+        <echo message="Set up Over-The-Air-Distribution"/>
+        <property name="fileprefix" value="${env.JOB_NAME}-${env.BUILD_NUMBER}-${config.device}"/>
+        <property name="app.path" value="${build.dir}/${config.device}-iphoneos/${target.app}.app"/>
+        <property name="dSYM.path" value="${build.dir}/${config.device}-iphoneos/${target.app}.app.dSYM"/>
+        <property name="output.dir" location="${basedir}/output"/>
+        <delete dir="${output.dir}" />
+        <mkdir dir="${output.dir}/${fileprefix}" />
+        
+        <exec executable="perl">
+            <arg line="parsePlist.pl" />
+            <arg line="${target.app}" />
+        </exec>
+        <property file="${target.app}-Infoplist.properties" />
+        
+        <!-- generate ipa file -->
+        <exec executable="xcrun" failonerror="true">
+            <arg line="-verbose" />
+            <arg line="-sdk ${sdk.device}" />
+            <arg line="PackageApplication" />
+            <arg line="-v '${app.path}'" />
+            <arg line="-o '${output.dir}/${fileprefix}/${app.title}.ipa'" />
+            <arg line="--sign '${codesign}'" />
+            <arg line="--embed '${basedir}/${provisioningprofile}'" />
+        </exec>
+        
+        <!-- manage app icons -->
+        <copy file="${basedir}/${icon.small}" tofile="${output.dir}/${fileprefix}/Icon-57.png"/>
+        <copy file="${basedir}/${icon.large}" tofile="${output.dir}/${fileprefix}/Icon-512.png"/>
+        
+        <!--copy file="${dSYM.path}" tofile="${output.dir}/${fileprefix}/${target.app}.app.dSYM"/-->
+        
+        <!-- generate app manifest -->
+        <echoxml file="${output.dir}/${fileprefix}/app-manifest.plist">
+            <!--<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">-->
+            <plist version="1.0">
+                <dict>
+                    <key>items</key>
+                    <array>
+                        <dict>
+                            <key>assets</key>
+                            <array>
+                                <dict>
+                                    <key>kind</key>
+                                    <string>software-package</string>
+                                    <key>url</key>
+                                    <string>${OTAURL}/output/${fileprefix}/${app.title}.ipa</string>
+                                </dict>
+                                <dict>
+                                    <key>kind</key>
+                                    <string>full-size-image</string>
+                                    <key>needs-shine</key>
+                                    <true/>
+                                    <key>url</key>
+                                    <string>${OTAURL}/output/${fileprefix}/Icon-512.png</string>
+                                </dict>
+                                <dict>
+                                    <key>kind</key>
+                                    <string>display-image</string>
+                                    <key>needs-shine</key>
+                                    <true/>
+                                    <key>url</key>
+                                    <string>${OTAURL}/output/${fileprefix}/Icon-57.png</string>
+                                </dict>
+                            </array>
+                            <key>metadata</key>
+                            <dict>
+                                <key>bundle-identifier</key>
+                                <string>${CFBundleIdentifier}</string>
+                                <key>bundle-version</key>
+                                <string>${CFBundleShortVersionString} #${env.BUILD_NUMBER}</string>
+                                <key>kind</key>
+                                <string>software</string>
+                                <key>title</key>
+                                <string>${app.title}</string>
+                                <key>subtitle</key>
+                                <string>${app.subtitle}</string>
+                            </dict>
+                        </dict>
+                    </array>
+                </dict>
+            </plist>
+        </echoxml>
+    </target>
+    
+</project>
