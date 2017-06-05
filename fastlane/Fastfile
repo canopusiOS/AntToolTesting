@@ -31,7 +31,7 @@ platform :ios do
   desc "This will also make sure the profile is up to date"
   lane :beta do
 	increment_build_number({
-  		build_number: latest_testflight_build_number + 0.1
+  		build_number: latest_testflight_build_number + 1
 	})
 
     # match(type: "appstore") # more information: https://codesigning.guide
